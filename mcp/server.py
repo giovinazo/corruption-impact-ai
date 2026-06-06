@@ -274,7 +274,14 @@ def get_internal_rule(title: str, article: str = "", offset: int = 0,
     if article.strip():
         sec = _slice_section(r["text"], article)
         if sec is None:
-            return {**out, "error": f"'{article}' 구간을 찾지 못함 — 표기 확인 (예: 제43조의2, 별표3의2)"}
+            # 부재 확정 지원: 이 규정에 실제 존재하는 별표·조문 목록을 함께 반환
+            bps = sorted(set(re.findall(r"별\s*표\s*([0-9]+(?:의[0-9]+|[-‑][0-9]+)?)", r["text"])),
+                         key=lambda x: (int(re.match(r"\d+", x).group()), x))
+            n_art = len(re.findall(r"제\s*\d+\s*조(?:의\d+)?\s*\(", r["text"]))
+            return {**out,
+                    "결과": f"'{article}' 구간 없음 — 이 규정 본문에 해당 조문·별표가 존재하지 않습니다",
+                    "본문에_존재하는_별표": bps, "조문_정의_수": n_art,
+                    "비고": "개정안이 이 구간을 인용한다면 '존재하지 않는 구간 인용'에 해당 — 동시 신설 필요 여부 검토"}
         out.update({"구간": article, "본문": sec[:max_chars],
                     "구간_글자수": len(sec)})
         return out

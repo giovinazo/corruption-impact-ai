@@ -5,7 +5,7 @@
 알리오(타 기관 형평성·자체규정 충돌)와 법제처(상위법령 정합성)를 결합한
 사규 사전검토 **대화형 보조도구**. 판단은 담당자가, 추론은 Claude가, 자료는 MCP가.
 
-도구 13종 — A군 도메인지식(5) / B군 자체규정(3) / C군 타기관(2) / D군 법령(2)
+도구 14종 — A군 도메인지식(5) / 문서(1) / B군 자체규정(3) / C군 타기관(3) / D군 법령(2)
 """
 import json
 import os
@@ -432,6 +432,41 @@ def search_peer_rules(rule_keyword: str, inst_names: str = "") -> dict:
             "비고": "0건 기관은 규정 명칭이 다를 수 있음 — 키워드를 바꾸거나 inst_names='*'로 전국 명칭 분포 확인"}
 
 
+def _get_peer_text(inst_name: str, seq: str):
+    """타 기관 규정 본문 조달 (캐시 우선 → 다운로드+추출). (text, meta, cached) 반환."""
+    os.makedirs(PEER_CACHE, exist_ok=True)
+    txt_cache = os.path.join(PEER_CACHE, f"{seq}.txt")
+    meta_cache = os.path.join(PEER_CACHE, f"{seq}.meta.json")
+
+    if os.path.exists(txt_cache) and os.path.exists(meta_cache):
+        with open(meta_cache, encoding="utf-8") as f:
+            meta = json.load(f)
+        with open(txt_cache, encoding="utf-8") as f:
+            return f.read(), meta, True
+
+    s = session()
+    detail = alio_client.fetch_rule_detail(s, seq)
+    latest = detail.get("latest")
+    if not latest:
+        raise RuntimeError(f"seq {seq} 파일정보 없음: {detail.get('error', 'latest 없음')}")
+
+    file_name = latest["file_name"]
+    ext = os.path.splitext(file_name)[1].lower() or ".hwp"
+    raw_path = os.path.join(PEER_CACHE, f"{seq}{ext}")
+    ok, _, msg = alio_client.download_rule_file_to_path(s, latest["file_no"], raw_path)
+    if not ok:
+        raise RuntimeError(f"다운로드 실패: {msg}")
+    text = extract_any(raw_path)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+
+    meta = {"기관": inst_name, "seq": seq, "원본파일": file_name}
+    with open(txt_cache, "w", encoding="utf-8") as f:
+        f.write(text)
+    with open(meta_cache, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+    return text, meta, False
+
+
 @mcp.tool()
 def fetch_peer_rule(inst_name: str, seq: str, offset: int = 0,
                     max_chars: int = 20000) -> dict:
@@ -445,47 +480,74 @@ def fetch_peer_rule(inst_name: str, seq: str, offset: int = 0,
         seq: search_peer_rules 결과의 규정 seq.
         offset / max_chars: 본문 페이징 (기본 20,000자).
     """
-    os.makedirs(PEER_CACHE, exist_ok=True)
-    txt_cache = os.path.join(PEER_CACHE, f"{seq}.txt")
-    meta_cache = os.path.join(PEER_CACHE, f"{seq}.meta.json")
-
-    if os.path.exists(txt_cache) and os.path.exists(meta_cache):
-        with open(meta_cache, encoding="utf-8") as f:
-            meta = json.load(f)
-        with open(txt_cache, encoding="utf-8") as f:
-            text = f.read()
-        out = {**meta, "캐시": True}
-        out.update(_page(text, offset, max_chars))
-        return out
-
-    s = session()
-    detail = alio_client.fetch_rule_detail(s, seq)
-    latest = detail.get("latest")
-    if not latest:
-        return {"error": f"seq {seq} 파일정보 없음: {detail.get('error', 'latest 없음')}"}
-
-    file_name = latest["file_name"]
-    ext = os.path.splitext(file_name)[1].lower() or ".hwp"
-    raw_path = os.path.join(PEER_CACHE, f"{seq}{ext}")
-    ok, _, msg = alio_client.download_rule_file_to_path(s, latest["file_no"], raw_path)
-    if not ok:
-        return {"error": f"다운로드 실패: {msg}"}
-
     try:
-        text = extract_any(raw_path)
+        text, meta, cached = _get_peer_text(inst_name, seq)
     except Exception as e:
-        return {"error": f"텍스트 추출 실패({ext}): {e}", "다운로드_파일": raw_path}
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
-    meta = {"기관": inst_name, "seq": seq, "원본파일": file_name}
-    with open(txt_cache, "w", encoding="utf-8") as f:
-        f.write(text)
-    with open(meta_cache, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-
-    out = {**meta, "캐시": False}
+        return {"error": str(e)}
+    out = {**meta, "캐시": cached}
     out.update(_page(text, offset, max_chars))
     return out
+
+
+@mcp.tool()
+def survey_peer_rules(rule_keyword: str, contain: str, max_fetch: int = 450,
+                      sample: int = 3, context: int = 70) -> dict:
+    """전국 동종 규정 전수에서 특정 문구의 보유 현황을 집계한다 (형평성 통계).
+
+    예: survey_peer_rules('행동강령', '음주운전 자진신고') → "보유 N/M개 기관(x%)" +
+    대표 발췌. 수작업으로 반나절 걸리던 전수 비교를 한 번의 호출로 수행한다.
+
+    주의: 첫 실행은 기관별 본문 다운로드로 수 분이 걸릴 수 있다(이후 캐시로 즉답).
+    시연·대량 조사 전에는 한 번 미리 실행해 캐시를 적재해 둘 것.
+
+    Args:
+        rule_keyword: 규정명 키워드 (예: '행동강령'). 기관당 첫 매칭 1건만 조사.
+        contain: 본문에서 찾을 문구 (예: '음주운전', '자진신고').
+        max_fetch: 조사할 최대 기관 수 (기본 450).
+        sample: 대표 발췌 수 (기본 3).
+        context: 발췌 전후 문맥 글자수.
+    """
+    total, items = _search_rules_by_title(rule_keyword.strip())
+    by_org = {}
+    for it in items:
+        org = (it.get("pname") or "").strip()
+        if org and org not in by_org:
+            by_org[org] = it
+    rows = list(by_org.items())[:max_fetch]
+
+    have, samples, fails = [], [], []
+
+    def one(org, it):
+        text, _, _ = _get_peer_text(org, it["seq"])
+        pos = text.find(contain)
+        return org, it, pos, text
+
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        futs = {ex.submit(one, org, it): org for org, it in rows}
+        for f in as_completed(futs):
+            try:
+                org, it, pos, text = f.result()
+                if pos >= 0:
+                    have.append(org)
+                    if len(samples) < sample:
+                        s0 = max(0, pos - context)
+                        samples.append({
+                            "기관": org, "규정명": it.get("title", "").strip(),
+                            "발췌": "…" + text[s0:pos + len(contain) + context].replace("\n", " ") + "…"})
+            except Exception as e:
+                fails.append({"기관": futs[f], "오류": str(e)[:80]})
+
+    surveyed = len(rows) - len(fails)
+    rate = round(len(have) / surveyed * 100, 1) if surveyed else 0.0
+    return {
+        "규정_키워드": rule_keyword, "검색_문구": contain,
+        "전국_매칭": total, "조사_기관수": surveyed,
+        "보유_기관수": len(have), "보유율_퍼센트": rate,
+        "대표_발췌": samples,
+        "조사_실패": len(fails),
+        "보유_기관_목록_일부": sorted(have)[:30],
+        "비고": "기관당 동명 규정 1건 기준 · 본문 추출 실패 기관은 분모에서 제외",
+    }
 
 
 # ════════════════════════════════════════════════════════════

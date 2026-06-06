@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""부패영향평가 AI MCP — 도구 13종 self-check (서버 함수 직접 호출)
+"""부패영향평가 AI MCP — 도구 14종 self-check (서버 함수 직접 호출)
 
 A·B군은 오프라인, C군은 알리오 실호출, D군은 법제처 프록시 실호출.
 LAW_PROXY_TOKEN 미설정 시 open-law .env에서 자동 로드 시도.
@@ -93,6 +93,9 @@ if peer:
     check("fetch_peer_rule(캐시 재호출)", server.fetch_peer_rule,
           "대한무역투자진흥공사", hit["seq"], max_chars=300,
           validate=lambda r: r["캐시"] is True)
+check("survey_peer_rules(여비규정·출장, 5개 기관)", server.survey_peer_rules,
+      "여비규정", "출장", 5, 1,
+      validate=lambda r: r["조사_기관수"] >= 3 and r["보유_기관수"] >= 1)
 
 print("── 신규: 문서 추출·조문 단위·행정규칙 ──")
 _draft = os.path.expanduser(

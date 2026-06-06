@@ -28,7 +28,7 @@ corruption-impact-ai/
 ├── commands/사규검토.md          # /사규검토 — 대화형 검토 세션 시작
 ├── skills/assessment-writer/    # 세부평가서·결과통보서 작성 규칙
 └── mcp/
-    ├── server.py                # FastMCP 도구 13종
+    ├── server.py                # FastMCP 도구 14종
     ├── alio_client.py           # 알리오 (alio-crawler에서 이식)
     ├── law_client.py            # 법제처 (open-law에서 이식, NAS 프록시 경유)
     ├── hwp_extract.py           # HWP 스펙준수 파서 + HWPX/PDF/DOCX
@@ -39,7 +39,7 @@ corruption-impact-ai/
         └── peer_cache/          # 타 기관 규정 캐시 (자동 생성)
 ```
 
-## 도구 13종
+## 도구 14종
 
 | 군 | 도구 | 기능 |
 |---|---|---|
@@ -54,6 +54,7 @@ corruption-impact-ai/
 | | `search_internal_rules` | 전문(全文) 키워드 검색 — 충돌·이중부담 탐지 |
 | C 타기관 | `search_peer_rules` | 타 기관 동종 규정 검색 (기본 비교군 5개, 병렬) |
 | | `fetch_peer_rule` | 다운로드+텍스트 추출 원스톱 (HWP/HWPX/PDF/DOCX, 캐시) |
+| | `survey_peer_rules` | **전국 전수 통계** — 동종 규정에서 문구 보유율 집계 (예: 행동강령 내 음주운전 자진신고 1.1%) |
 | D 법령 | `search_law` | 법령·행정규칙(`target=admrul` — 권익위 예규 등) 검색 (약칭 14종) |
 | | `get_law_text` | 법령·행정규칙 본문/조문 (summary 모드 기본) |
 

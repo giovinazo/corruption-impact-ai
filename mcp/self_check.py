@@ -94,7 +94,7 @@ if peer:
           "대한무역투자진흥공사", hit["seq"], max_chars=300,
           validate=lambda r: r["캐시"] is True)
 check("survey_peer_rules(여비규정·출장, 5개 기관)", server.survey_peer_rules,
-      "여비규정", "출장", 5, 1,
+      "여비규정", "출장", max_fetch=5, sample=1,
       validate=lambda r: r["조사_기관수"] >= 3 and r["보유_기관수"] >= 1)
 
 print("── 신규: 문서 추출·조문 단위·행정규칙 ──")

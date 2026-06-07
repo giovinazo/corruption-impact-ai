@@ -1,0 +1,13 @@
+{
+  "name": "corruption-impact-ai",
+  "owner": {
+    "name": "허재영 (한국산업단지공단)"
+  },
+  "plugins": [
+    {
+      "name": "corruption-impact-ai",
+      "source": "./",
+      "description": "부패영향평가 AI — 산단공 사규 제·개정안 사전검토 대화형 보조도구. 「부패영향평가 지침」 기준·체크리스트 164항목 내장 + 알리오(타 기관 형평성·자체규정 충돌) + 법제처(상위법령 정합성) 결합 MCP"
+    }
+  ]
+}

@@ -67,11 +67,34 @@ def _norm(s: str) -> str:
     return re.sub(r"[\s·･‧»·]+", "", s or "")
 
 
+def _list_sections(text: str) -> dict:
+    """규정 전문에 실재하는 별표 번호·조문 정의 수를 반환 (부재 확정 진단용)."""
+    bps = sorted(set(re.findall(r"별\s*표\s*([0-9]+(?:의[0-9]+|[-‑][0-9]+)?)", text)),
+                 key=lambda x: (int(re.match(r"\d+", x).group()), x))
+    bps = [b.replace("-", "의").replace("‑", "의") for b in bps]
+    # 중복 제거(3-2와 3의2가 같은 별표) — 순서 보존
+    seen, norm_bps = set(), []
+    for b in bps:
+        if b not in seen:
+            seen.add(b); norm_bps.append(b)
+    n_art = len(re.findall(r"제\s*\d+\s*조(?:의\d+)?\s*\(", text))
+    return {"본문에_존재하는_별표": norm_bps, "조문_정의_수": n_art}
+
+
+def _missing_section_diag(out: dict, text: str, article: str) -> dict:
+    """조문·별표 부재 시 존재 목록과 비고를 붙여 반환 (get_internal_rule·extract_document 공용)."""
+    return {**out,
+            "결과": f"'{article}' 구간 없음 — 이 규정 본문에 해당 조문·별표가 존재하지 않습니다",
+            **_list_sections(text),
+            "비고": "개정안이 이 구간을 인용한다면 '존재하지 않는 구간 인용'에 해당 — 동시 신설 필요 여부 검토"}
+
+
 def _slice_section(text: str, article: str):
     """규정 전문에서 조문('제43조의2') 또는 별표('별표3의2'/'별표 3-2') 구간만 추출.
 
     조문은 정의부 패턴 '제N조(…)'(괄호 제목)로 식별하므로 본문 중 인용("제36조와
-    관련하여")은 걸리지 않는다. 별표는 마지막 매칭(별표 본문 영역)을 사용한다.
+    관련하여")은 걸리지 않는다. 단 '제N조 삭제'(괄호 없는 삭제 조문)도 존재로 인정한다.
+    별표는 본문 블록이 가장 큰 매칭(각주·참조가 아닌 실제 표 영역)을 사용한다.
     """
     key = re.sub(r"[\s\[\]〔〕]", "", article).replace("-", "의").replace("‑", "의")
     if key.startswith("별표"):
@@ -82,9 +105,15 @@ def _slice_section(text: str, article: str):
         idx = [i for i, (_, n) in enumerate(heads) if n == key]
         if not idx:
             return None
-        k = idx[-1]
+        # 각주·참조('별표3 참조')가 아닌 실제 표 본문 = 다음 헤드까지 길이가 가장 긴 매칭
+        def span_len(i):
+            s = heads[i][0]
+            e = heads[i + 1][0] if i + 1 < len(heads) else len(text)
+            return e - s
+        k = max(idx, key=span_len)
     else:
-        pat = re.compile(r"제\s*([0-9]+)\s*조(?:\s*의\s*([0-9]+))?\s*\(")
+        # '제N조(...' 정의부 또는 '제N조 삭제'(괄호 없는 삭제 조문)
+        pat = re.compile(r"제\s*([0-9]+)\s*조(?:\s*의\s*([0-9]+))?\s*(?:\(|삭\s*제)")
         heads = [(m.start(),
                   f"제{m.group(1)}조" + (f"의{m.group(2)}" if m.group(2) else ""))
                  for m in pat.finditer(text)]
@@ -95,6 +124,11 @@ def _slice_section(text: str, article: str):
     start = heads[k][0]
     end = heads[k + 1][0] if k + 1 < len(heads) else len(text)
     return text[start:end].strip()
+
+
+def _safe_seq(seq) -> bool:
+    """알리오 seq는 숫자 문자열 — 경로 주입(../ 등) 차단."""
+    return bool(re.fullmatch(r"[0-9]+", str(seq)))
 
 
 def _page(text: str, offset: int, max_chars: int) -> dict:
@@ -274,14 +308,7 @@ def get_internal_rule(title: str, article: str = "", offset: int = 0,
     if article.strip():
         sec = _slice_section(r["text"], article)
         if sec is None:
-            # 부재 확정 지원: 이 규정에 실제 존재하는 별표·조문 목록을 함께 반환
-            bps = sorted(set(re.findall(r"별\s*표\s*([0-9]+(?:의[0-9]+|[-‑][0-9]+)?)", r["text"])),
-                         key=lambda x: (int(re.match(r"\d+", x).group()), x))
-            n_art = len(re.findall(r"제\s*\d+\s*조(?:의\d+)?\s*\(", r["text"]))
-            return {**out,
-                    "결과": f"'{article}' 구간 없음 — 이 규정 본문에 해당 조문·별표가 존재하지 않습니다",
-                    "본문에_존재하는_별표": bps, "조문_정의_수": n_art,
-                    "비고": "개정안이 이 구간을 인용한다면 '존재하지 않는 구간 인용'에 해당 — 동시 신설 필요 여부 검토"}
+            return _missing_section_diag(out, r["text"], article)
         out.update({"구간": article, "본문": sec[:max_chars],
                     "구간_글자수": len(sec)})
         return out
@@ -330,12 +357,17 @@ def extract_document(path: str, article: str = "", offset: int = 0,
     공시 전 내부 초안은 알리오에 없으므로 이 도구로 조달한다.
 
     Args:
-        path: 문서 절대경로 (~ 확장 지원).
+        path: 문서 경로 (~ 확장 지원). 심볼릭 링크는 거부한다.
         article: 조문·별표 단위 추출 — '제48조', '별표3의3' 형식 (선택).
         offset / max_chars: 본문 페이징 (기본 20,000자).
+
+    보안: 심볼릭 링크와 디렉터리는 거부. 단일 사용자 로컬 도구이나, 프롬프트
+    인젝션으로 임의 경로가 주입되는 것을 차단하기 위해 실경로를 검사한다.
     """
-    p = os.path.expanduser(path)
-    if not os.path.exists(p):
+    p = os.path.realpath(os.path.expanduser(path))
+    if os.path.islink(os.path.expanduser(path)):
+        return {"error": "심볼릭 링크는 허용하지 않습니다"}
+    if not os.path.isfile(p):
         return {"error": f"파일 없음: {p}"}
     ext = os.path.splitext(p)[1].lower()
     if ext not in (".hwp", ".hwpx", ".pdf", ".docx"):
@@ -349,7 +381,7 @@ def extract_document(path: str, article: str = "", offset: int = 0,
     if article.strip():
         sec = _slice_section(text, article)
         if sec is None:
-            return {**out, "error": f"'{article}' 구간을 찾지 못함"}
+            return _missing_section_diag(out, text, article)
         out.update({"구간": article, "본문": sec[:max_chars], "구간_글자수": len(sec)})
         return out
     out.update(_page(text, offset, max_chars))
@@ -434,6 +466,8 @@ def search_peer_rules(rule_keyword: str, inst_names: str = "") -> dict:
 
 def _get_peer_text(inst_name: str, seq: str):
     """타 기관 규정 본문 조달 (캐시 우선 → 다운로드+추출). (text, meta, cached) 반환."""
+    if not _safe_seq(seq):
+        raise ValueError(f"잘못된 seq: {seq!r} — 숫자만 허용 (경로 주입 차단)")
     os.makedirs(PEER_CACHE, exist_ok=True)
     txt_cache = os.path.join(PEER_CACHE, f"{seq}.txt")
     meta_cache = os.path.join(PEER_CACHE, f"{seq}.meta.json")
@@ -490,8 +524,8 @@ def fetch_peer_rule(inst_name: str, seq: str, offset: int = 0,
 
 
 @mcp.tool()
-def survey_peer_rules(rule_keyword: str, contain: str, max_fetch: int = 450,
-                      sample: int = 3, context: int = 70) -> dict:
+def survey_peer_rules(rule_keyword: str, contain: str, match: str = "tokens",
+                      max_fetch: int = 450, sample: int = 3, context: int = 70) -> dict:
     """전국 동종 규정 전수에서 특정 문구의 보유 현황을 집계한다 (형평성 통계).
 
     예: survey_peer_rules('행동강령', '음주운전 자진신고') → "보유 N/M개 기관(x%)" +
@@ -502,7 +536,11 @@ def survey_peer_rules(rule_keyword: str, contain: str, max_fetch: int = 450,
 
     Args:
         rule_keyword: 규정명 키워드 (예: '행동강령'). 기관당 첫 매칭 1건만 조사.
-        contain: 본문에서 찾을 문구 (예: '음주운전', '자진신고').
+        contain: 본문에서 찾을 문구. 공백으로 나뉜 여러 토큰을 주면 **모두 포함**
+                 (AND·순서무관)하는 기관을 센다 — 예 '음주운전 자진신고'는
+                 '음주운전'과 '자진신고'가 (표제든 문장형이든) 함께 나오는 기관을 집계.
+                 정확한 연속 문구만 세려면 match='phrase' 지정.
+        match: 'tokens'(기본, 공백분리 AND) | 'phrase'(연속 문자열 그대로).
         max_fetch: 조사할 최대 기관 수 (기본 450).
         sample: 대표 발췌 수 (기본 3).
         context: 발췌 전후 문맥 글자수.
@@ -515,38 +553,62 @@ def survey_peer_rules(rule_keyword: str, contain: str, max_fetch: int = 450,
             by_org[org] = it
     rows = list(by_org.items())[:max_fetch]
 
-    have, samples, fails = [], [], []
+    tokens = contain.split() if match == "tokens" else [contain]
+
+    def hit_pos(text):
+        """매칭 성립 시 첫 토큰 위치 반환, 아니면 -1. tokens 모드는 모든 토큰 포함 필요."""
+        if match == "tokens":
+            if all(t in text for t in tokens):
+                return min(text.find(t) for t in tokens)
+            return -1
+        return text.find(contain)
+
+    results, fails = {}, []  # results[org] = (it, pos, text) — seq 순 결정적 집계
 
     def one(org, it):
         text, _, _ = _get_peer_text(org, it["seq"])
-        pos = text.find(contain)
-        return org, it, pos, text
+        return org, it, hit_pos(text), text
 
     with ThreadPoolExecutor(max_workers=5) as ex:
         futs = {ex.submit(one, org, it): org for org, it in rows}
         for f in as_completed(futs):
             try:
                 org, it, pos, text = f.result()
-                if pos >= 0:
-                    have.append(org)
-                    if len(samples) < sample:
-                        s0 = max(0, pos - context)
-                        samples.append({
-                            "기관": org, "규정명": it.get("title", "").strip(),
-                            "발췌": "…" + text[s0:pos + len(contain) + context].replace("\n", " ") + "…"})
+                results[org] = (it, pos, text)
             except Exception as e:
                 fails.append({"기관": futs[f], "오류": str(e)[:80]})
 
+    # 동시성 무관 결정적 결과: org 정렬 순회로 보유·발췌 수집
+    have, samples = [], []
+    for org in sorted(results):
+        it, pos, text = results[org]
+        if pos < 0:
+            continue
+        have.append(org)
+        if len(samples) < sample:
+            s0 = max(0, pos - context)
+            end = pos + (len(contain) if match == "phrase" else len(tokens[0])) + context
+            samples.append({"기관": org, "규정명": it.get("title", "").strip(),
+                            "발췌": "…" + text[s0:end].replace("\n", " ") + "…"})
+
     surveyed = len(rows) - len(fails)
-    rate = round(len(have) / surveyed * 100, 1) if surveyed else 0.0
+    if surveyed <= 0:
+        status = "본문_추출_전부실패" if rows else "비교가능_규정_없음"
+        return {"규정_키워드": rule_keyword, "검색_문구": contain, "전국_매칭": total,
+                "조사_기관수": surveyed, "보유율_퍼센트": None, "상태": status,
+                "조사_실패": len(fails),
+                "비고": "조사 대상이 0 — 보유율을 0%로 해석하지 말 것"}
+    rate = round(len(have) / surveyed * 100, 1)
     return {
-        "규정_키워드": rule_keyword, "검색_문구": contain,
+        "규정_키워드": rule_keyword, "검색_문구": contain, "매칭방식": match,
         "전국_매칭": total, "조사_기관수": surveyed,
         "보유_기관수": len(have), "보유율_퍼센트": rate,
         "대표_발췌": samples,
         "조사_실패": len(fails),
         "보유_기관_목록_일부": sorted(have)[:30],
-        "비고": "기관당 동명 규정 1건 기준 · 본문 추출 실패 기관은 분모에서 제외",
+        "비고": ("기관당 동명 규정 1건 기준 · 본문 추출 실패 기관은 분모에서 제외 · "
+               + ("토큰 AND 매칭(표제·문장형 모두 포착)" if match == "tokens"
+                  else "연속 문구 정확매칭")),
     }
 
 

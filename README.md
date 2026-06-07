@@ -54,7 +54,7 @@ corruption-impact-ai/
 | | `search_internal_rules` | 전문(全文) 키워드 검색 — 충돌·이중부담 탐지 |
 | C 타기관 | `search_peer_rules` | 타 기관 동종 규정 검색 (기본 비교군 5개, 병렬) |
 | | `fetch_peer_rule` | 다운로드+텍스트 추출 원스톱 (HWP/HWPX/PDF/DOCX, 캐시) |
-| | `survey_peer_rules` | **전국 전수 통계** — 동종 규정에서 문구 보유율 집계 (예: 행동강령 내 음주운전 자진신고 1.1%) |
+| | `survey_peer_rules` | **전국 전수 통계** — 동종 규정 문구 보유율 집계 (토큰 AND/phrase 매칭, 결정적). 예: 음주운전 자진신고 의무 4.5%(표제 1.1%) |
 | D 법령 | `search_law` | 법령·행정규칙(`target=admrul` — 권익위 예규 등) 검색 (약칭 14종) |
 | | `get_law_text` | 법령·행정규칙 본문/조문 (summary 모드 기본) |
 
@@ -65,7 +65,7 @@ corruption-impact-ai/
 claude --plugin-dir /path/to/corruption-impact-ai
 ```
 
-요구사항: Python 3.10+ / `pip install mcp requests olefile PyMuPDF python-docx`
+요구사항: Python 3.10+ / `pip install -r mcp/requirements.txt` (mcp·requests·urllib3·olefile·PyMuPDF·python-docx)
 
 ### 환경변수
 

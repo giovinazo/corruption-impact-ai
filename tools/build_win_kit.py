@@ -42,7 +42,7 @@ import certifi
 os.environ.setdefault("SSL_CERT_FILE", certifi.where())
 os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
-KIT_VERSION = "0.3"
+KIT_VERSION = "0.4"
 PY_VER = "3.12.10"          # 3.12 마지막 바이너리 릴리스 (임베디드 zip 제공)
 PY_TAG = "312"
 EMBED_URL = (f"https://www.python.org/ftp/python/{PY_VER}/"

@@ -234,6 +234,45 @@ if not exist "%DEST%\runtime\python\python.exe" (
 pause
 """
 
+TEST_BAT = r"""@echo off
+setlocal
+set KIT=%~dp02_플러그인\cia-win
+set RT=%KIT%\runtime\python\python.exe
+if not exist "%RT%" (
+  echo [실패] 동봉 런타임이 없습니다. zip을 "통째로" 푼 뒤 실행해 주세요.
+  pause & exit /b 1
+)
+echo ============================================================
+echo  부패영향평가 AI - 런타임 자가시험 (Claude Code 설치 불필요)
+echo ============================================================
+echo.
+echo [1] 동봉 Python 기동
+"%RT%" -X utf8 -c "import platform; print('   OK', platform.python_version(), '/', platform.platform())" || goto :fail
+echo [2] 의존성 6종 import
+"%RT%" -X utf8 -c "import mcp,requests,urllib3,olefile,fitz,docx; print('   OK 전부 import 성공')" || goto :fail
+echo [3] 서버 모듈 + 데이터 적재
+"%RT%" -X utf8 -c "import sys; sys.path.insert(0, r'%KIT%\mcp'); import server; print('   OK 내부규정', len(server.corpus()), '건 / 경영지침', len(server.guidelines()), '건')" || goto :fail
+echo.
+echo [4] 종합 진단(doctor) - 알리오/법령/Anthropic 접속 포함
+"%RT%" -X utf8 "%KIT%\mcp\doctor.py"
+echo.
+echo 여기까지 정상이면 이 노트북에서 키트가 동작합니다. 결과 화면을 캡처해 주세요.
+pause & exit /b 0
+:fail
+echo.
+echo [실패] 위 단계 오류 - 화면을 캡처해 감사실 감사팀에 전달해 주세요.
+pause & exit /b 1
+"""
+
+CLEANUP_BAT = r"""@echo off
+echo 부패영향평가 AI - 설치 흔적 정리 (시험용 PC 정리)
+call claude plugin uninstall corruption-impact-ai@corruption-impact-ai --scope user 2>nul
+call claude plugin marketplace remove corruption-impact-ai 2>nul
+if exist "%LOCALAPPDATA%\cia-plugin" rd /s /q "%LOCALAPPDATA%\cia-plugin" && echo  - 복사본 삭제 완료
+echo 정리 끝. (zip을 푼 이 폴더는 직접 삭제해 주세요)
+pause
+"""
+
 SETUP_PERMISSIONS = '''#!/usr/bin/env python3
 """cia MCP 도구 전체를 권한 사전허용 — 직원이 도구 권한 팝업을 보지 않게 한다.
 규칙 문법(공식 문서): mcp__<server>__* / 플러그인 서버는 plugin_<플러그인>_<서버>로 네임스페이스.
@@ -259,6 +298,10 @@ else:
 
 README_TXT = """■ 부패영향평가 AI — 실증 키트 v{ver} (Windows)
 
+ 0. (선택·권장) 기기 자가시험 — Claude Code 설치 전에도 가능
+    이 폴더의  test_runtime.bat  더블클릭
+    → 동봉 런타임·의존성·데이터·접속을 1분 안에 점검 (이 PC에서 도는지 확인)
+
 설치 순서 (관리자 권한 불필요):
 
  1. [1회만] Claude Code 설치
@@ -278,6 +321,9 @@ README_TXT = """■ 부패영향평가 AI — 실증 키트 v{ver} (Windows)
 
 문제가 생기면: doctor.bat 더블클릭 → 결과 화면을 감사실 감사팀에 전달
 (법령[4] 항목만 빨간불이면 법령 기능 외에는 모두 사용 가능합니다)
+
+시험용 PC를 정리하려면: cleanup.bat 더블클릭 후 이 폴더 삭제
+(이 키트에는 법령 프록시 접속 토큰이 들어 있으니 타인 PC에서는 정리 권장)
 """
 
 
@@ -285,6 +331,8 @@ def write_kit_files():
     (BUILD / "install.bat").write_bytes(
         INSTALL_BAT.replace("{ver}", KIT_VERSION).encode("cp949"))
     (BUILD / "doctor.bat").write_bytes(DOCTOR_BAT.encode("cp949"))
+    (BUILD / "test_runtime.bat").write_bytes(TEST_BAT.encode("cp949"))
+    (BUILD / "cleanup.bat").write_bytes(CLEANUP_BAT.encode("cp949"))
     (BUILD / "setup_permissions.py").write_text(
         SETUP_PERMISSIONS.format(rule=PERMISSION_RULE), encoding="utf-8")
     (BUILD / "0_읽어주세요.txt").write_text(

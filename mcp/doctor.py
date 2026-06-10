@@ -131,9 +131,21 @@ def main():
     try:
         import law_client
         tok = law_client._resolve_token()
+        if not tok:
+            # 키트 배포본 폴백: 플러그인 루트 .mcp.json(cia env)에 토큰이 주입돼 있다
+            try:
+                import json as _j
+                with open(os.path.join(HERE, "..", ".mcp.json"), encoding="utf-8") as _f:
+                    env = (_j.load(_f).get("mcpServers", {})
+                           .get("cia", {}).get("env", {}))
+                tok = env.get("LAW_PROXY_TOKEN", "")
+                if tok:
+                    os.environ["LAW_PROXY_TOKEN"] = tok
+            except (OSError, ValueError):
+                pass
         url = law_client.PROXY_URL
         if tok:
-            add("OK", "토큰 해석됨", f"{_mask(tok)} (env 또는 설정에서 로드)")
+            add("OK", "토큰 해석됨", f"{_mask(tok)} (env/동봉 .mcp.json에서 로드)")
         else:
             add("WARN", "토큰 없음",
                 "env LAW_PROXY_TOKEN 또는 플러그인 설정에 주입 필요(설치가이드). "

@@ -371,6 +371,9 @@ def main():
     write_kit_files()
     out = make_zip()
 
+    # 중간 빌드트리는 zip에 다 들어갔으므로 제거 (NAS 동기화 부담·중복 방지)
+    shutil.rmtree(BUILD.parent, ignore_errors=True)
+
     size_mb = out.stat().st_size / 1e6
     log("─" * 50)
     log(f"완료: {out}")

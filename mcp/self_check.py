@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""부패영향평가 AI MCP — 도구 16종 self-check (서버 함수 직접 호출)
+"""부패영향평가 AI MCP — 도구 18종 self-check (서버 함수 직접 호출)
 
-A·B·E군은 오프라인, C군은 알리오 실호출, D군은 법제처 프록시 실호출.
+A·B군 오프라인, C군 알리오·D군 법제처·E군(조회) 오프라인·자가갱신은 알리오 실호출.
 LAW_PROXY_TOKEN 미설정 시 open-law .env에서 자동 로드 시도.
 """
 import os
@@ -150,6 +150,12 @@ check("list_mgmt_guidelines(예산운용 검색)", server.list_mgmt_guidelines,
 check("get_mgmt_guideline(경영지침 제3조)", server.get_mgmt_guideline,
       "경영에 관한 지침", "제3조",
       validate=lambda r: "정원" in r["본문"] and r["상태"] == "현행")
+
+print("── 자가갱신 (알리오 대조 실호출) ──")
+check("check_corpus_freshness", server.check_corpus_freshness,
+      validate=lambda r: r["알리오_건수"] >= 70 and "최신여부" in r and "내장_기준일" in r)
+check("refresh_corpus(미리보기)", server.refresh_corpus,
+      validate=lambda r: r.get("미리보기") is True)
 
 print("\n" + "=" * 50)
 print(f"PASS {len(PASS)} / FAIL {len(FAIL)}")

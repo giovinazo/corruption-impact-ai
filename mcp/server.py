@@ -9,6 +9,7 @@
 """
 import json
 import os
+import pathlib
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -21,6 +22,8 @@ from hwp_extract import extract_any
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(BASE, "data")
 PEER_CACHE = os.path.join(DATA, "peer_cache")
+# 직원 PC 자가갱신본 저장소 — 플러그인 업데이트(캐시 폴더 교체)에도 보존
+REFRESH_DIR = pathlib.Path.home() / ".cache" / "corruption-impact-ai"
 
 # 기본 비교군: 산업통상자원부 산하 등 유사 위탁집행형 준정부기관
 # (환경변수 CIA_DEFAULT_PEERS="기관1,기관2"로 오버라이드)
@@ -56,16 +59,38 @@ def corpus() -> list:
     return _corpus
 
 
+def _meta_in(d) -> dict:
+    try:
+        return json.loads(
+            (pathlib.Path(d) / "guidelines_corpus.meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _active_guidelines_dir():
+    """갱신본(~/.cache) vs 동봉본 중 반영 공시일(alio_latest)이 더 최신인 쪽을 택한다.
+    plugin update로 더 새 동봉본이 와도 옛 갱신본이 고착되지 않도록(회귀 방지)."""
+    bundled = pathlib.Path(DATA)
+    if (REFRESH_DIR / "guidelines_corpus.json").exists():
+        if _meta_in(REFRESH_DIR).get("alio_latest", "") >= _meta_in(bundled).get("alio_latest", ""):
+            return REFRESH_DIR
+    return bundled
+
+
 def guidelines() -> list:
     global _guidelines
     if _guidelines is None:
-        path = os.path.join(DATA, "guidelines_corpus.json")
+        path = _active_guidelines_dir() / "guidelines_corpus.json"
         try:
-            with open(path, encoding="utf-8") as f:
-                _guidelines = json.load(f)
+            _guidelines = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             _guidelines = []
     return _guidelines
+
+
+def guidelines_meta() -> dict:
+    """활성 코퍼스(갱신본·동봉본 중 최신)의 기준일·건수 메타."""
+    return _meta_in(_active_guidelines_dir())
 
 
 def session():
@@ -751,8 +776,9 @@ def list_mgmt_guidelines(status: str = "현행", keyword: str = "") -> dict:
         out.append({"지침명": g["norm"], "제목": g["title"], "소관": g["ministry"],
                     "공시일": g["date"], "상태": g["status"], "글자수": g["chars"]})
     return {"기준": "공운법 제50조 경영지침 (재정경제부 통보, 알리오 공시)",
+            "기준일": guidelines_meta().get("built_at", "(미상)"),
             "상태필터": status, "건수": len(out), "지침": out,
-            "비고": "본문·조문은 get_mgmt_guideline(title)로 조회"}
+            "비고": "본문·조문은 get_mgmt_guideline(title)로 조회 · 최신 여부는 check_corpus_freshness"}
 
 
 @mcp.tool()
@@ -784,7 +810,8 @@ def get_mgmt_guideline(title: str, article: str = "", offset: int = 0,
     g = cur[0] if cur else hits[-1]
     out = {"지침명": g["norm"], "제목": g["title"], "소관": g["ministry"],
            "공시일": g["date"], "상태": g["status"],
-           "출처": "공운법 제50조 / 알리오 공시 (법제처 미등재)"}
+           "출처": "공운법 제50조 / 알리오 공시 (법제처 미등재)",
+           "기준일": guidelines_meta().get("built_at", "(미상)")}
     if article.strip():
         sec = _slice_section(g["text"], article)
         if sec is None:
@@ -793,6 +820,70 @@ def get_mgmt_guideline(title: str, article: str = "", offset: int = 0,
         return out
     out.update(_page(g["text"], offset, max_chars))
     return out
+
+
+# ════════════════════════════════════════════════════════════
+# 자가갱신 — 검토 시점의 현행성 보장 (알리오 대조 + 증분 수집)
+# ════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def check_corpus_freshness() -> dict:
+    """내장 경영지침 코퍼스가 알리오 현행 공시와 일치하는지 점검한다 (본문 미수집, 수 초).
+
+    검토 세션 시작 시 호출 권장. 부패영향평가는 검토 시점의 '현행' 상위규범이 중요하므로,
+    신규 공시가 있으면 refresh_corpus로 갱신할 수 있도록 안내한다.
+    """
+    import corpus_refresh
+    meta = guidelines_meta()
+    d = corpus_refresh.diff_guidelines(guidelines(), session())
+    fresh = not d["new"] and not d["removed"]
+    n = len(d["new"])
+    return {
+        "대상": "경영지침 (E군)",
+        "내장_기준일": meta.get("built_at", "(메타 없음)"),
+        "내장_건수": d["corpus_count"], "알리오_건수": d["alio_total"],
+        "알리오_최신공시": d["alio_latest"],
+        "신규_공시": [{"제목": p["title"], "공시일": p["date"]} for p in d["new"]],
+        "삭제_감지": d["removed"],
+        "최신여부": fresh,
+        "안내": ("내장 코퍼스가 현행과 일치합니다."
+                 if fresh else
+                 f"신규 공시 {n}건 — 검토 정확도를 위해 refresh_corpus(apply=True) 갱신을 권장합니다."),
+        "갱신_예상": None if fresh else f"약 {max(2, n * 3)}초 · 수천 토큰 내외",
+    }
+
+
+@mcp.tool()
+def refresh_corpus(apply: bool = False) -> dict:
+    """경영지침 코퍼스를 알리오 현행으로 증분 갱신한다 (바뀐 항목만 수집).
+
+    Args:
+        apply: False(기본)=미리보기(무엇이 갱신될지·예상 비용만 반환, 실제 수집 안 함).
+               True=실제 수집·반영. 갱신본은 사용자 캐시에 저장돼 플러그인 업데이트에도 보존된다.
+    """
+    import corpus_refresh
+    if not apply:
+        d = corpus_refresh.diff_guidelines(guidelines(), session())
+        n = len(d["new"])
+        return {"미리보기": True,
+                "신규_예정": [{"제목": p["title"], "공시일": p["date"]} for p in d["new"]],
+                "삭제_감지": d["removed"],
+                "예상": (f"약 {max(2, n * 3)}초 · 수천 토큰 내외" if n else "변동 없음 (갱신 불필요)"),
+                "실행": "반영하려면 refresh_corpus(apply=True)"}
+    REFRESH_DIR.mkdir(parents=True, exist_ok=True)
+    records, summary = corpus_refresh.refresh_guidelines(
+        guidelines(), session(), str(REFRESH_DIR / "guidelines_hwp"))
+    from datetime import datetime
+    meta = {"built_at": datetime.now().strftime("%Y-%m-%d"), "count": len(records),
+            "현행": summary["현행"], "alio_latest": summary["알리오_최신공시"],
+            "source": "알리오 etcLawList B1120 (직원 PC 갱신)"}
+    (REFRESH_DIR / "guidelines_corpus.json").write_text(
+        json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    (REFRESH_DIR / "guidelines_corpus.meta.json").write_text(
+        json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+    global _guidelines
+    _guidelines = None  # 다음 호출 시 갱신본 재로드
+    return {"반영완료": True, "기준일": meta["built_at"], **summary}
 
 
 if __name__ == "__main__":

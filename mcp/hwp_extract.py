@@ -139,6 +139,20 @@ def extract_docx_text(path: str) -> str:
     return "\n".join(parts)
 
 
+def extract_hwpml_text(path: str) -> str:
+    """HWPML(한글 XML, <HWPML> 루트) → 텍스트. BODY의 <P> 단락 단위 개행.
+    구형 .hwp로 표기됐으나 실제 HWPML(2.x)로 공시된 문서 대응(회계기준 등)."""
+    import html
+    import re
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        xml = f.read()
+    m = re.search(r"<BODY\b.*</BODY>", xml, re.DOTALL)   # 본문만 (HEAD 메타 제외)
+    body = m.group(0) if m else xml
+    body = re.sub(r"</P\s*>", "\n", body)                 # 단락 경계 → 개행
+    body = re.sub(r"<[^>]+>", "", body)                   # 잔여 태그 제거
+    return re.sub(r"\n{3,}", "\n\n", html.unescape(body)).strip()
+
+
 def extract_any(path: str) -> str:
     """확장자에 따라 HWP/HWPX/PDF/DOCX 자동 분기 추출"""
     import os

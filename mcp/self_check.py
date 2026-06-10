@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""부패영향평가 AI MCP — 도구 14종 self-check (서버 함수 직접 호출)
+"""부패영향평가 AI MCP — 도구 16종 self-check (서버 함수 직접 호출)
 
-A·B군은 오프라인, C군은 알리오 실호출, D군은 법제처 프록시 실호출.
+A·B·E군은 오프라인, C군은 알리오 실호출, D군은 법제처 프록시 실호출.
 LAW_PROXY_TOKEN 미설정 시 open-law .env에서 자동 로드 시도.
 """
 import os
@@ -141,6 +141,16 @@ if law:
     check("get_law_text(summary)", server.get_law_text,
           str(laws[0].get("법령일련번호")), "", "summary",
           validate=lambda r: r.get("조문수", 0) > 0)
+
+print("── E군 경영지침 (오프라인 코퍼스, 공운법 제50조) ──")
+check("list_mgmt_guidelines(현행)", server.list_mgmt_guidelines,
+      validate=lambda r: r["건수"] >= 25)
+check("list_mgmt_guidelines(예산운용 검색)", server.list_mgmt_guidelines,
+      "현행", "예산운용",
+      validate=lambda r: r["건수"] >= 1)
+check("get_mgmt_guideline(경영지침 제3조)", server.get_mgmt_guideline,
+      "경영에 관한 지침", "제3조",
+      validate=lambda r: "정원" in r["본문"] and r["상태"] == "현행")
 
 print("\n" + "=" * 50)
 print(f"PASS {len(PASS)} / FAIL {len(FAIL)}")

@@ -36,6 +36,7 @@ mcp = FastMCP("cia")
 
 _kb = None
 _corpus = None
+_guidelines = None
 _session = None
 
 
@@ -53,6 +54,18 @@ def corpus() -> list:
         with open(os.path.join(DATA, "rules_corpus.json"), encoding="utf-8") as f:
             _corpus = json.load(f)
     return _corpus
+
+
+def guidelines() -> list:
+    global _guidelines
+    if _guidelines is None:
+        path = os.path.join(DATA, "guidelines_corpus.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                _guidelines = json.load(f)
+        except (OSError, ValueError):
+            _guidelines = []
+    return _guidelines
 
 
 def session():
@@ -163,6 +176,7 @@ def get_assessment_guide() -> dict:
             "2) get_criteria → 11개 평가기준 개관, 개정안 성격에 맞는 중점 기준 선정",
             "3) get_checklist(worktype=...) → 업무유형별 체크리스트로 조문별 점검",
             "4) [상위법령] search_law + get_law_text → 개정안이 상위법령 범주 내인지 대조",
+            "4-2) [상위지침] list_mgmt_guidelines + get_mgmt_guideline → 정원·보수·예산·재무 사항은 재정경제부 경영지침(공운법 제50조, 법제처 미등재)을 상위법령과 함께 대조",
             "5) [자체규정 충돌] search_internal_rules → 동일 사안 이중규정·저촉 탐지",
             "6) [타기관 형평성] search_peer_rules + fetch_peer_rule → 동종 규정 수준 비교",
             "7) get_form_template('세부평가서') → 검토 결과를 서식에 정리",
@@ -705,6 +719,80 @@ def get_law_text(mst: str, jo: str = "", mode: str = "summary",
                           "조문제목": u.get("조문제목"),
                           "조문여부": u.get("조문여부")} for u in units]}
     return {"기본정보": body.get("기본정보"), "조문": body.get("조문")}
+
+
+# ════════════════════════════════════════════════════════════
+# E군 — 상위 경영지침 정합성 (공운법 제50조 / 재정경제부)
+# ════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def list_mgmt_guidelines(status: str = "현행", keyword: str = "") -> dict:
+    """재정경제부 경영지침(공운법 제50조) 목록을 반환한다.
+
+    공운법 제50조에 따라 재정경제부장관이 정하고 공기업·준정부기관에 통보하는
+    경영지침(① 조직·정원·인사 ② 예산·자금 ③ 재무건전성)은 법제처 국가법령정보에
+    등재되지 않고 알리오에만 공시된다. 사규 개정안이 정원·보수·복리후생·예산을
+    건드릴 때 상위법령(D군)과 함께 대조해야 하는 1차 기준이다.
+
+    Args:
+        status: '현행'(기본)·'연혁'·'전체'. 같은 지침명은 최신 공시본만 현행.
+        keyword: 지침명 부분일치 필터 (예: '예산', '혁신', '경영', '안전').
+    """
+    gs = guidelines()
+    if not gs:
+        return {"error": "경영지침 코퍼스 미적재 — tools/build_guidelines.py로 수집 필요"}
+    nk = _norm(keyword)
+    out = []
+    for g in gs:
+        if status != "전체" and g.get("status") != status:
+            continue
+        if nk and nk not in _norm(g["norm"]):
+            continue
+        out.append({"지침명": g["norm"], "제목": g["title"], "소관": g["ministry"],
+                    "공시일": g["date"], "상태": g["status"], "글자수": g["chars"]})
+    return {"기준": "공운법 제50조 경영지침 (재정경제부 통보, 알리오 공시)",
+            "상태필터": status, "건수": len(out), "지침": out,
+            "비고": "본문·조문은 get_mgmt_guideline(title)로 조회"}
+
+
+@mcp.tool()
+def get_mgmt_guideline(title: str, article: str = "", offset: int = 0,
+                       max_chars: int = 20000) -> dict:
+    """경영지침 전문 또는 특정 조문을 조회한다 (지침명 부분일치, 현행 우선).
+
+    Args:
+        title: 지침명 (부분일치 — 예: '경영에 관한 지침', '예산운용', '혁신').
+               서로 다른 지침 복수 매칭 시 후보 목록을 반환한다.
+        article: 조문 단위 추출 — '제15조'·'제15조의2' 형식 (선택).
+        offset / max_chars: 본문 페이징 (기본 20,000자, article 미지정 시).
+    """
+    gs = guidelines()
+    if not gs:
+        return {"error": "경영지침 코퍼스 미적재 — tools/build_guidelines.py로 수집 필요"}
+    nt = _norm(title)
+    hits = [g for g in gs if nt in _norm(g["norm"]) or nt in _norm(g["title"])]
+    if not hits:
+        return {"error": f"'{title}' 경영지침 없음 — list_mgmt_guidelines로 목록 확인"}
+    norm_keys = {_norm(g["norm"]) for g in hits}          # 공백·가운뎃점 표기차 흡수
+    if len(norm_keys) > 1:
+        cur = sorted({g["norm"] for g in hits if g.get("status") == "현행"})
+        return {"안내": f"'{title}' 매칭 {len(norm_keys)}종 — 정확한 지침명으로 재호출",
+                "후보": cur or sorted({g["norm"] for g in hits})}
+    # 동일 지침의 현행·연혁 중 현행(최신) 우선
+    hits.sort(key=lambda g: (g.get("status") != "현행", g.get("date", "")), reverse=False)
+    cur = [g for g in hits if g.get("status") == "현행"]
+    g = cur[0] if cur else hits[-1]
+    out = {"지침명": g["norm"], "제목": g["title"], "소관": g["ministry"],
+           "공시일": g["date"], "상태": g["status"],
+           "출처": "공운법 제50조 / 알리오 공시 (법제처 미등재)"}
+    if article.strip():
+        sec = _slice_section(g["text"], article)
+        if sec is None:
+            return _missing_section_diag(out, g["text"], article)
+        out.update({"구간": article, "본문": sec[:max_chars], "구간_글자수": len(sec)})
+        return out
+    out.update(_page(g["text"], offset, max_chars))
+    return out
 
 
 if __name__ == "__main__":

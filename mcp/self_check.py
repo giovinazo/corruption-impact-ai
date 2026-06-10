@@ -98,14 +98,13 @@ check("survey_peer_rules(여비규정·출장, 5개 기관)", server.survey_peer
       validate=lambda r: r["조사_기관수"] >= 3 and r["보유_기관수"] >= 1)
 
 print("── 신규: 문서 추출·조문 단위·행정규칙 ──")
-_draft = os.path.expanduser(
-    "~/Documents/04_법률_규정/임직원_행동강령_검토/"
-    "2. 한국산업단지공단 임직원 행동강령 개정(안) 전문.hwpx")
-if os.path.exists(_draft):
+# 개정안 표본 문서 경로는 env로 주입 — 공개 저장소에 빌드 머신 내부 경로를 두지 않는다
+_draft = os.path.expanduser(os.environ.get("CIA_SELFCHECK_DOC", ""))
+if _draft and os.path.exists(_draft):
     check("extract_document(개정안 HWPX)", server.extract_document, _draft,
           validate=lambda r: r["전체_글자수"] > 30000)
 else:
-    print("  SKIP extract_document — 검토용 로컬 문서 없음")
+    print("  SKIP extract_document — CIA_SELFCHECK_DOC(표본 문서 경로) 미설정")
 
 check("get_internal_rule(article=제43조의2)", server.get_internal_rule,
       "임직원 행동강령", "제43조의2",

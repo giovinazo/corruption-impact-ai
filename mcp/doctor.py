@@ -130,20 +130,9 @@ def main():
     print("\n[4] 법령(법제처)  (상위법령 정합성 — NAS 프록시 경유)")
     try:
         import law_client
+        # 토큰·주소 모두 law_client가 env→~/.claude.json→동봉 .mcp.json 순으로 해석
         tok = law_client._resolve_token()
-        if not tok:
-            # 키트 배포본 폴백: 플러그인 루트 .mcp.json(cia env)에 토큰이 주입돼 있다
-            try:
-                import json as _j
-                with open(os.path.join(HERE, "..", ".mcp.json"), encoding="utf-8") as _f:
-                    env = (_j.load(_f).get("mcpServers", {})
-                           .get("cia", {}).get("env", {}))
-                tok = env.get("LAW_PROXY_TOKEN", "")
-                if tok:
-                    os.environ["LAW_PROXY_TOKEN"] = tok
-            except (OSError, ValueError):
-                pass
-        url = law_client.PROXY_URL
+        url = law_client.proxy_url()
         if tok:
             add("OK", "토큰 해석됨", f"{_mask(tok)} (env/동봉 .mcp.json에서 로드)")
         else:
@@ -151,25 +140,30 @@ def main():
                 "env LAW_PROXY_TOKEN 또는 플러그인 설정에 주입 필요(설치가이드). "
                 "토큰 없으면 법령 도구만 비활성, 알리오·문서추출은 정상.")
         # 도달성 — 토큰 유무와 무관하게 '네트워크가 닿는가'부터 확인
-        try:
-            import requests
-            r = requests.get(
-                f"{url}/lawSearch.do",
-                params={"type": "JSON", "target": "law", "query": "테스트"},
-                headers={"X-Proxy-Token": tok or "preflight-probe"},
-                timeout=8,
-            )
-            if r.status_code == 200:
-                add("OK", "법령 프록시 완전 동작", f"{url} → 200")
-            elif r.status_code in (401, 403):
-                add("WARN", "프록시 도달 OK · 토큰만 필요/불일치",
-                    f"{url} → {r.status_code}. 네트워크는 뚫림 — 올바른 토큰 주입 후 재점검하면 OK.")
-            else:
-                add("WARN", "프록시 응답 이상", f"{url} → HTTP {r.status_code}")
-        except Exception as e:
-            add("FAIL", "법령 프록시 도달 불가",
-                f"{type(e).__name__} — 회사망이 8765 평문 아웃바운드를 차단했거나 NAS가 내려갔을 수 있음. "
-                "이 항목이 FAIL이면 회사 네트워크팀에 'law-proxy.example.com:8765/TCP 아웃바운드 허용'을 문의.")
+        if not url:
+            add("WARN", "프록시 주소(LAW_PROXY_URL) 미설정",
+                "배포 키트는 .mcp.json에 자동 주입됨 — 개발 환경은 env 또는 open-law 등록에 설정. "
+                "주소 없으면 법령 도구만 비활성, 알리오·문서추출은 정상.")
+        else:
+            try:
+                import requests
+                r = requests.get(
+                    f"{url}/lawSearch.do",
+                    params={"type": "JSON", "target": "law", "query": "테스트"},
+                    headers={"X-Proxy-Token": tok or "preflight-probe"},
+                    timeout=8,
+                )
+                if r.status_code == 200:
+                    add("OK", "법령 프록시 완전 동작", f"{url} → 200")
+                elif r.status_code in (401, 403):
+                    add("WARN", "프록시 도달 OK · 토큰만 필요/불일치",
+                        f"{url} → {r.status_code}. 네트워크는 뚫림 — 올바른 토큰 주입 후 재점검하면 OK.")
+                else:
+                    add("WARN", "프록시 응답 이상", f"{url} → HTTP {r.status_code}")
+            except Exception as e:
+                add("FAIL", "법령 프록시 도달 불가",
+                    f"{type(e).__name__} — 망이 프록시 포트를 차단했거나 프록시가 내려갔을 수 있음. "
+                    f"네트워크 관리자에게 '{url} 아웃바운드 허용'을 확인.")
     except ImportError:
         add("WARN", "law_client 미발견", "doctor를 mcp/ 폴더 안에서 실행했는지 확인.")
     except Exception as e:

@@ -151,22 +151,29 @@ def install_runtime():
 # ──────────────────────────────────────────────────────────────────
 # 3. Windows용 .mcp.json — 동봉 런타임 + 토큰 주입
 # ──────────────────────────────────────────────────────────────────
-def resolve_token() -> str:
+def resolve_proxy() -> tuple:
+    """법령 프록시 주소·토큰 — 빌드 머신의 ~/.claude.json open-law env에서 읽어
+    키트에 주입한다 (공개 저장소 코드에는 운영 설비 주소·토큰을 두지 않음)."""
     cfg = json.loads((pathlib.Path.home() / ".claude.json").read_text())
-    tok = (cfg.get("mcpServers", {}).get("open-law", {})
-           .get("env", {}).get("LAW_PROXY_TOKEN", ""))
+    env = cfg.get("mcpServers", {}).get("open-law", {}).get("env", {})
+    url = env.get("LAW_PROXY_URL", "").rstrip("/")
+    tok = env.get("LAW_PROXY_TOKEN", "")
     if not tok:
-        raise SystemExit("~/.claude.json에서 LAW_PROXY_TOKEN을 찾지 못함")
-    return tok
+        raise SystemExit("~/.claude.json open-law env에서 LAW_PROXY_TOKEN을 찾지 못함")
+    if not url:
+        raise SystemExit("~/.claude.json open-law env에 LAW_PROXY_URL이 없음 — "
+                         "프록시 주소를 등록 후 재빌드")
+    return url, tok
 
 
-def write_mcp_json(token: str):
+def write_mcp_json(url: str, token: str):
     mcp_json = {
         "mcpServers": {
             "cia": {
                 "command": "${CLAUDE_PLUGIN_ROOT}/runtime/python/python.exe",
                 "args": ["-X", "utf8", "${CLAUDE_PLUGIN_ROOT}/mcp/server.py"],
                 "env": {
+                    "LAW_PROXY_URL": url,
                     "LAW_PROXY_TOKEN": token,
                     "PYTHONUTF8": "1",
                 },
@@ -175,7 +182,7 @@ def write_mcp_json(token: str):
     }
     (PLUG_DST / ".mcp.json").write_text(
         json.dumps(mcp_json, ensure_ascii=False, indent=2), encoding="utf-8")
-    log(".mcp.json 재작성 (동봉 런타임·토큰 주입·UTF-8 강제)")
+    log(".mcp.json 재작성 (동봉 런타임·프록시 주소/토큰 주입·UTF-8 강제)")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -364,10 +371,10 @@ def make_zip() -> pathlib.Path:
 def main():
     log(f"빌드 시작 — 키트 v{KIT_VERSION}, Python {PY_VER} embed")
     OUT_ROOT.mkdir(exist_ok=True)
-    token = resolve_token()          # 빌드 전제 확인을 먼저 (실패 조기 발견)
+    url, token = resolve_proxy()     # 빌드 전제 확인을 먼저 (실패 조기 발견)
     copy_plugin()
     pkgs = install_runtime()
-    write_mcp_json(token)
+    write_mcp_json(url, token)
     write_kit_files()
     out = make_zip()
 

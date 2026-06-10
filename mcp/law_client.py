@@ -1,11 +1,14 @@
 """법제처 OPEN API 클라이언트 (NAS 프록시 경유) — open-law MCP에서 이식.
 
 환경변수:
-    LAW_PROXY_URL   NAS 프록시 base URL (기본 http://law-proxy.example.com:8765)
+    LAW_PROXY_URL   중계 프록시 base URL (필수 — 기본값 없음, 운영자 제공·키트 자동 주입)
     LAW_PROXY_TOKEN X-Proxy-Token 값 (필수)
 
+env 미설정 시 폴백: ① ~/.claude.json의 open-law MCP env(개발 환경)
+② 플러그인 루트 .mcp.json의 cia env(배포 키트) 순서로 두 값을 해석한다.
+
 프록시가 OC를 자동 주입하므로 토큰만 보내면 됨 — IP 화이트리스트 제약 없이
-사내망 등 어느 환경에서나 호출 가능 (부패영향평가 담당자 PC에서 동작하는 핵심 조건).
+어느 환경에서나 호출 가능 (부패영향평가 담당자 PC에서 동작하는 핵심 조건).
 """
 import hashlib
 import json
@@ -16,7 +19,6 @@ from urllib.parse import urlencode
 
 import requests
 
-PROXY_URL = os.environ.get("LAW_PROXY_URL", "http://law-proxy.example.com:8765").rstrip("/")
 TIMEOUT = 30
 _CACHE_DIR = pathlib.Path.home() / ".cache" / "corruption-impact-ai"
 _CACHE_TTL_SEC = 7 * 86400  # 7일
@@ -46,23 +48,39 @@ def _cache_path(path: str, params: dict) -> pathlib.Path:
     return _CACHE_DIR / f"{key}.json"
 
 
-def _resolve_token() -> str:
-    """LAW_PROXY_TOKEN 해석 — 환경변수 우선, 없으면 ~/.claude.json의
-    open-law MCP 등록값 차용 (동일 프록시 공유 — 설정 제로 동작)."""
-    token = os.environ.get("LAW_PROXY_TOKEN")
-    if token:
-        return token
-    try:
-        with open(pathlib.Path.home() / ".claude.json", encoding="utf-8") as f:
-            cfg = json.load(f)
-        token = (cfg.get("mcpServers", {}).get("open-law", {})
-                 .get("env", {}).get("LAW_PROXY_TOKEN", ""))
-        if token:
-            os.environ["LAW_PROXY_TOKEN"] = token  # 1회 해석 후 재사용
-            return token
-    except (OSError, ValueError):
-        pass
+def _resolve_from_configs(key: str) -> str:
+    """env 우선, 없으면 설정파일 폴백 — ① ~/.claude.json open-law env(개발 환경)
+    ② 플러그인 루트 .mcp.json cia env(배포 키트). 찾으면 env에 캐시해 재사용."""
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    sources = [
+        (pathlib.Path.home() / ".claude.json", ("mcpServers", "open-law", "env")),
+        (pathlib.Path(__file__).resolve().parent.parent / ".mcp.json",
+         ("mcpServers", "cia", "env")),
+    ]
+    for path, keys in sources:
+        try:
+            node = json.loads(path.read_text(encoding="utf-8"))
+            for k in keys:
+                node = node.get(k, {}) if isinstance(node, dict) else {}
+            val = node.get(key, "") if isinstance(node, dict) else ""
+            if val:
+                os.environ[key] = val
+                return val
+        except (OSError, ValueError):
+            continue
     return ""
+
+
+def proxy_url() -> str:
+    """중계 프록시 base URL — 공개 저장소에 운영 설비 주소를 박지 않기 위해
+    코드 기본값을 두지 않는다 (env·설정 주입 전용)."""
+    return _resolve_from_configs("LAW_PROXY_URL").rstrip("/")
+
+
+def _resolve_token() -> str:
+    return _resolve_from_configs("LAW_PROXY_TOKEN")
 
 
 def call(path: str, params: dict) -> dict:
@@ -70,6 +88,9 @@ def call(path: str, params: dict) -> dict:
     token = _resolve_token()
     if not token:
         raise RuntimeError("LAW_PROXY_TOKEN 미설정 — 환경변수 또는 플러그인 설정에서 주입 필요")
+    base = proxy_url()
+    if not base:
+        raise RuntimeError("LAW_PROXY_URL 미설정 — 환경변수 또는 플러그인 설정에서 주입 필요")
     full = {"type": "JSON", **params}
     use_cache = os.environ.get("CIA_LAW_CACHE", "1") != "0"
 
@@ -82,7 +103,7 @@ def call(path: str, params: dict) -> dict:
                 pass
 
     headers = {"X-Proxy-Token": token}
-    r = requests.get(f"{PROXY_URL}/{path}", params=full, headers=headers, timeout=TIMEOUT)
+    r = requests.get(f"{base}/{path}", params=full, headers=headers, timeout=TIMEOUT)
     r.raise_for_status()
     data = r.json()
 

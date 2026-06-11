@@ -1,8 +1,11 @@
 {
   "mcpServers": {
     "cia": {
-      "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/server.py"]
+      "command": "${CIA_PYTHON:-python3}",
+      "args": ["-X", "utf8", "${CLAUDE_PLUGIN_ROOT}/mcp/server.py"],
+      "env": {
+        "PYTHONUTF8": "1"
+      }
     }
   }
 }

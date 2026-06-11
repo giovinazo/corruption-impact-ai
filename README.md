@@ -66,17 +66,31 @@
 ## 설치 (Claude Code)
 
 ```bash
-git clone https://github.com/giovinazo/corruption-impact-ai.git
-claude plugin marketplace add ./corruption-impact-ai
+claude plugin marketplace add giovinazo/corruption-impact-ai
 claude plugin install corruption-impact-ai@corruption-impact-ai --scope user
 ```
 
-요구사항: Python 3.10+ / `pip install -r mcp/requirements.txt`
-(mcp·requests·urllib3·olefile·PyMuPDF·python-docx)
+요구사항: Git / Python 3.10+ / `pip install mcp requests urllib3 olefile PyMuPDF python-docx`
+
+설치 후 1회 설정 (법령 D군 도구를 쓰려는 경우):
+
+- **Windows**: 저장소의 [`setup_token.bat`](setup_token.bat)을 내려받아 더블클릭 —
+  법제처 중계 프록시 주소·토큰(운영자에게 별도 발급 요청)을 입력하면 사용자 환경변수로
+  저장되고, MCP 실행용 Python 명령(`CIA_PYTHON`)도 자동 지정됩니다.
+  완료 후 Claude Code를 완전히 종료했다가 다시 시작하세요.
+- **macOS/Linux**: `LAW_PROXY_URL`·`LAW_PROXY_TOKEN` 환경변수를 셸 프로파일 등에 설정하세요.
+
+토큰 없이도 법령(D군) 2종 외 도구 16종은 전부 동작합니다.
+
+업데이트(재설치 불필요):
+
+```bash
+claude plugin update corruption-impact-ai
+```
 
 Windows 비전문가 배포용으로는 **무설치 키트 빌더**(`tools/build_win_kit.py`)를 제공합니다 —
 임베디드 Python과 의존성 전체를 동봉해, 대상 PC에 파이썬 설치 없이 동작합니다
-(자가진단 `doctor.py`·`test_runtime.bat` 포함).
+(자가진단 `doctor.py`·`test_runtime.bat` 포함, 토큰 동봉이라 위 1회 설정도 불필요).
 
 ### 환경변수
 
@@ -103,12 +117,12 @@ corruption-impact-ai/
 ├── skills/assessment-writer/    # 세부평가서·결과통보서 작성 규칙
 ├── tools/                       # 빌드·수집 도구 (Windows 키트 빌더, 경영지침 수집기)
 └── mcp/
-    ├── server.py                # FastMCP 도구 16종
+    ├── server.py                # FastMCP 도구 18종
     ├── alio_client.py           # 알리오 클라이언트
     ├── law_client.py            # 법제처 클라이언트 (중계 프록시 경유)
     ├── hwp_extract.py           # HWP 스펙준수 파서 + HWPX/PDF/DOCX/HWPML
     ├── doctor.py                # 배포 프리플라이트 진단 (대상 PC 자가점검)
-    ├── self_check.py            # 도구 검증 (PASS 29)
+    ├── self_check.py            # 도구 검증 (PASS 30)
     └── data/
         ├── assessment_kb.json      # 지침 구조화 — 기준 11·체크리스트 164항목·서식 4종
         ├── rules_corpus.json       # 내부규정 137건 전문 (알리오 공시 기반, 200만 자)

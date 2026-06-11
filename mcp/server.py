@@ -12,7 +12,13 @@ import json
 import os
 import pathlib
 import re
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# 임베디드 런타임은 ._pth가 sys.path를 고정해 스크립트 폴더가 자동 등재되지 않는다.
+# 자기 폴더를 명시해 형제 모듈(alio_client 등)을 어떤 설치 배치에서든 찾게 한다.
+# (폴더명이 mcp라서 '부모' 폴더를 넣으면 site-packages의 mcp 패키지를 가리므로 금지)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from mcp.server.fastmcp import FastMCP
 

@@ -88,9 +88,10 @@ claude plugin install corruption-impact-ai@corruption-impact-ai --scope user
 claude plugin update corruption-impact-ai
 ```
 
-Windows 비전문가 배포용으로는 **무설치 키트 빌더**(`tools/build_win_kit.py`)를 제공합니다 —
-임베디드 Python과 의존성 전체를 동봉해, 대상 PC에 파이썬 설치 없이 동작합니다
-(자가진단 `doctor.py`·`test_runtime.bat` 포함, 토큰 동봉이라 위 1회 설정도 불필요).
+Windows 비전문가 배포용으로는 **부트스트랩 키트 빌더**(`tools/build_win_kit.py`)를 제공합니다 —
+임베디드 Python(의존성 전체 포함)과 접속 설정만 깔아주고, 플러그인 코드는 GitHub에서
+설치합니다. 대상 PC에 파이썬 설치가 필요 없고, 이후 버전 갱신은 `claude plugin update`
+한 줄입니다 (자가진단 `doctor.py`·`test_runtime.bat` 포함, 토큰 주입이라 위 1회 설정도 불필요).
 
 ### 환경변수
 
